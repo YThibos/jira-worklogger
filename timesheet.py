@@ -177,16 +177,34 @@ def remote_name(repo):
     return "/".join(parts[-2:]) if len(parts) >= 2 else repo.name
 
 
+def is_elevated():
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
 def export_outlook(first, last, out_csv, include_body):
+    if is_elevated():
+        # Outlook runs un-elevated; COM won't connect across that boundary and
+        # fails with 0x80080005 (CO_E_SERVER_EXEC_FAILURE).
+        raise RuntimeError("this is an elevated (Administrator) shell, which can't talk to Outlook. "
+                           "Run the command again from a normal PowerShell window.")
     script = HERE / "Export-OutlookCalendar.ps1"
     cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
            "-Start", first.isoformat(), "-End", (last + dt.timedelta(days=1)).isoformat(),
            "-OutFile", str(out_csv)]
     if include_body:
         cmd.append("-IncludeBody")
-    res = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace")
+    try:
+        res = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise RuntimeError(f"cannot start PowerShell: {exc}") from None
     if res.returncode != 0 or not out_csv.exists():
-        raise RuntimeError(f"Outlook export failed: {res.stderr.strip() or res.stdout.strip()}")
+        raise RuntimeError(res.stderr.strip() or res.stdout.strip())
 
 
 def read_calendar_csv(path):
@@ -241,6 +259,17 @@ def cmd_collect(args):
         sys.exit(f"{out} already exists and is not empty; pass --force to overwrite.")
     out.mkdir(parents=True, exist_ok=True)
 
+    # Calendar first: it's the step most likely to fail, so fail before the slow git scan.
+    events = []
+    if args.outlook:
+        print("Exporting Outlook calendar...")
+        try:
+            export_outlook(first, last, out / "calendar.csv", args.include_body)
+        except RuntimeError as exc:
+            sys.exit(f"Outlook export failed: {exc}")
+        events = read_calendar_csv(out / "calendar.csv")
+        print(f"  {len(events)} calendar items")
+
     print(f"Scanning {', '.join(args.root)} for git checkouts...")
     repos = []
     for path in find_repos(args.root, args.max_depth):
@@ -257,12 +286,6 @@ def cmd_collect(args):
                 "repos": repos}
     (out / "git-activity.json").write_text(json.dumps(activity, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    events = []
-    if args.outlook:
-        print("Exporting Outlook calendar...")
-        export_outlook(first, last, out / "calendar.csv", args.include_body)
-        events = read_calendar_csv(out / "calendar.csv")
-        print(f"  {len(events)} calendar items")
     for cal in args.calendar or []:
         src = Path(cal).expanduser()
         dest = out / src.name
@@ -315,20 +338,24 @@ def parse_started(value):
 
 
 class Jira:
-    def __init__(self, base, pat=None, email=None, token=None):
+    def __init__(self, base, pat=None, email=None, token=None, proxy_auth=False):
         self.base = base.rstrip("/")
-        if pat:
+        if proxy_auth:
+            self.auth = None  # a Cloud environment API credential adds the header outside the VM
+        elif pat:
             self.auth = f"Bearer {pat}"
         elif email and token:
             self.auth = "Basic " + base64.b64encode(f"{email}:{token}".encode()).decode()
         else:
-            raise SystemExit("Set JIRA_PAT (Server/Data Center) or JIRA_EMAIL + JIRA_API_TOKEN (Cloud).")
+            raise SystemExit("Set JIRA_PAT (Server/Data Center) or JIRA_EMAIL + JIRA_API_TOKEN (Cloud), "
+                             "or pass --proxy-auth when a Cloud environment API credential supplies it.")
 
     def call(self, method, path, body=None):
-        req = urllib.request.Request(self.base + path, method=method,
-                                     data=json.dumps(body).encode() if body is not None else None,
-                                     headers={"Authorization": self.auth, "Accept": "application/json",
-                                              "Content-Type": "application/json"})
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        if self.auth:
+            headers["Authorization"] = self.auth
+        req = urllib.request.Request(self.base + path, method=method, headers=headers,
+                                     data=json.dumps(body).encode() if body is not None else None)
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 raw = resp.read()
@@ -386,7 +413,8 @@ def cmd_post(args):
     if not base:
         print("\nValid. Set JIRA_URL (and credentials) to check against Jira; add --apply to post.")
         return
-    jira = Jira(base, os.environ.get("JIRA_PAT"), os.environ.get("JIRA_EMAIL"), os.environ.get("JIRA_API_TOKEN"))
+    jira = Jira(base, os.environ.get("JIRA_PAT"), os.environ.get("JIRA_EMAIL"), os.environ.get("JIRA_API_TOKEN"),
+                args.proxy_auth)
     me = jira.call("GET", "/rest/api/2/myself")
     my_ids = {me.get(k) for k in ("key", "name", "accountId") if me.get(k)}
     print(f"\nSigned in to {base} as {me.get('displayName')}")
@@ -443,6 +471,8 @@ def main():
     p.add_argument("--month", help="YYYY-MM; reject entries outside this month")
     p.add_argument("--url", help="Jira base URL (default: $JIRA_URL)")
     p.add_argument("--apply", action="store_true", help="actually post; without it this is a dry run")
+    p.add_argument("--proxy-auth", action="store_true",
+                   help="send no Authorization header (a Cloud environment API credential adds it)")
     p.set_defaults(func=cmd_post)
 
     args = parser.parse_args()

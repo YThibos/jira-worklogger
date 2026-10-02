@@ -21,7 +21,16 @@ $ErrorActionPreference = "Stop"
 $showAs = @{ 0 = "Free"; 1 = "Tentative"; 2 = "Busy"; 3 = "OutOfOffice"; 4 = "WorkingElsewhere" }
 $response = @{ 0 = "None"; 1 = "Organizer"; 2 = "Tentative"; 3 = "Accepted"; 4 = "Declined"; 5 = "NotResponded" }
 
-$outlook = New-Object -ComObject Outlook.Application
+try {
+    $outlook = New-Object -ComObject Outlook.Application
+} catch {
+    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+             ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($admin) {
+        throw "Cannot reach Outlook from an elevated (Administrator) PowerShell. Run this from a normal PowerShell window."
+    }
+    throw "Cannot reach Outlook (is classic Outlook installed and signed in?): $($_.Exception.Message)"
+}
 $calendar = $outlook.GetNamespace("MAPI").GetDefaultFolder(9)  # olFolderCalendar
 $items = $calendar.Items
 # Sort before IncludeRecurrences, then Restrict: that's what makes Outlook

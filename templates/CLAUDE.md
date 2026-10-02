@@ -53,9 +53,11 @@ Validate it with `python3 timesheet.py post worklogs.json --month YYYY-MM` (offl
 
 ## Posting
 
-- If `JIRA_URL` and a credential (`JIRA_PAT`, or `JIRA_EMAIL` + `JIRA_API_TOKEN`)
-  are set and the Jira host is reachable, run the same command to check for
-  duplicates against Jira. Post with `--apply` only after the user explicitly says so.
+- If `JIRA_URL` is set and the Jira host is reachable, run the same command to
+  check for duplicates against Jira. Credentials come from `JIRA_PAT` (or
+  `JIRA_EMAIL` + `JIRA_API_TOKEN`); if neither is set, the user stored the token
+  as an environment API credential, so add `--proxy-auth`. Post with `--apply`
+  only after the user explicitly says so.
 - Otherwise print the final `worklogs.json` in a single code block so the user can
   save it on the laptop and run `py timesheet.py post worklogs.json --apply` there.
   This session was uploaded as a bundle and cannot push files back.

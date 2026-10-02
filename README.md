@@ -31,6 +31,9 @@ timesheet.py post worklogs.json --apply ◄─ worklogs.json for you to post
 
 ## Each month
 
+Use a **normal (not Administrator) PowerShell**: Outlook runs un-elevated and
+an elevated shell can't connect to it (error `0x80080005`).
+
 ```powershell
 py timesheet.py collect --month 2026-09 --root C:\dev --root D:\work --outlook
 ```
@@ -70,16 +73,30 @@ py timesheet.py post worklogs.json --month 2026-09          # dry run + duplicat
 py timesheet.py post worklogs.json --month 2026-09 --apply  # post
 ```
 
-**From the Cloud session.** Edit the cloud environment: add
-`it-projects.just.fgov.be` to the allowed domains and `JIRA_URL` / `JIRA_PAT` as
-environment variables. Those variables are readable inside the session, so use a
-token with a short expiry and revoke it afterwards.
+**From the Cloud session.** Open the environment editor: in the Desktop app
+with **Cloud** selected (or at claude.ai/code), click the cloud/environment
+button above the message box, hover your environment (e.g. *Default*) and click
+the gear icon. In **Edit cloud environment**:
+
+1. Environment variables: add `JIRA_URL=https://it-projects.just.fgov.be`.
+2. The token, one of:
+   - **API credentials** section (Pro and Max plans only): *Add credential* →
+     type *Bearer*, host `it-projects.just.fgov.be`, header `Authorization`,
+     prefix `Bearer`, value = your PAT. Claude never sees the token, and the host
+     is allowed automatically. Claude then posts with `--proxy-auth`.
+   - Otherwise an environment variable `JIRA_PAT=...` (readable inside the
+     session: give it a short expiry and revoke it afterwards), plus
+     **Network access** → *Custom* → `it-projects.just.fgov.be` in **Allowed
+     domains**, with *Also include default list of common package managers* ticked.
+
+Changes apply to new sessions, so edit the environment before `claude --cloud`.
 
 Credentials, depending on the Jira edition (open
 `https://it-projects.just.fgov.be/rest/api/2/serverInfo` and look at
 `deploymentType`):
 
-- `Server` / Data Center: `JIRA_PAT` from *Profile → Personal Access Tokens*.
+- `Server` (this includes Data Center): a Personal Access Token from your avatar →
+  *Profile* → *Personal Access Tokens* → *Create token* (set an expiry).
 - `Cloud`: `JIRA_EMAIL` + `JIRA_API_TOKEN` from id.atlassian.com → Security → API tokens.
 
 Worklogs go through the standard Jira REST API (`/rest/api/2/issue/{key}/worklog`).
