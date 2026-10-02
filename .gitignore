@@ -1,0 +1,7 @@
+# Activity exports and worklogs contain work data: keep them off GitHub.
+timesheet-*/
+calendar*.csv
+*.ics
+worklogs*.json
+notes.md
+__pycache__/
